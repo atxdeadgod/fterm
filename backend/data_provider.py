@@ -1059,6 +1059,58 @@ class DataManager:
             
         return pd.DataFrame()
 
+        return pd.DataFrame()
+
+    def get_bond_transactions(self, ticker):
+        """Fetch Corporate Bond Transactions from TRACE"""
+        cache_path = self._get_cache_path(ticker, "trace_bonds")
+        if self._is_cache_valid(ticker, "trace_bonds") and cache_path.exists():
+             return pd.read_parquet(cache_path)
+
+        print(f"Fetching Bond Transactions for {ticker}...")
+        db = self._get_conn()
+        
+        # trace.trace_enhanced
+        # Fields: trd_exctn_dt, trd_exctn_tm, rptd_pr, yld_pt, entrd_vol_qt, bond_sym_id
+        # Filter by company_symbol = ticker
+        
+        query = f"""
+            select trd_exctn_dt, trd_exctn_tm, rptd_pr, yld_pt, entrd_vol_qt, bond_sym_id, cusip_id
+            from trace.trace_enhanced
+            where company_symbol='{ticker}'
+            and trd_exctn_dt >= '2020-01-01'
+            order by trd_exctn_dt desc
+            limit 2000
+        """
+        
+        try:
+            df = db.raw_sql(query, date_cols=['trd_exctn_dt'])
+            
+            if not df.empty:
+                # Numeric conversions
+                df['rptd_pr'] = pd.to_numeric(df['rptd_pr'], errors='coerce')
+                df['yld_pt'] = pd.to_numeric(df['yld_pt'], errors='coerce')
+                df['entrd_vol_qt'] = pd.to_numeric(df['entrd_vol_qt'], errors='coerce')
+                
+                # Create a datetime column from date and time
+                # Time is likely HH:MM:SS
+                def combine_dt(row):
+                    try:
+                        t = row['trd_exctn_tm']
+                        return pd.to_datetime(f"{row['trd_exctn_dt'].strftime('%Y-%m-%d')} {t}")
+                    except:
+                        return row['trd_exctn_dt']
+                        
+                df['datetime'] = df.apply(combine_dt, axis=1)
+                
+                df.to_parquet(cache_path)
+                return df
+                
+        except Exception as e:
+            print(f"Error fetching Bond Data: {e}")
+            
+        return pd.DataFrame()
+
     def get_sector_index(self, ticker, start_date='2020-01-01'):
         """
         Construct an equal-weighted sector index from SIC peers.

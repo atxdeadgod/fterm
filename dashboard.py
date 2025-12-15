@@ -201,11 +201,12 @@ if not prices_filtered.empty:
 col1, col2 = st.columns([3, 1])
 
 
+
 with col1:
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
         "Price & Performance", "Factor Analysis", "Peer Comparison", 
         "Fundamentals & Valuation", "Estimates", "Ownership & Shorts", 
-        "Debt & Credit", "News & Sentiment", "Governance", "Derivatives"
+        "Debt & Credit", "News & Sentiment", "Governance", "Derivatives", "Corporate Bonds"
     ])
 
     with tab1:
@@ -797,6 +798,80 @@ with col1:
                 
         else:
              st.info("No OptionMetrics Volatility Surface data found.")
+    
+    with tab11:
+        st.subheader("Corporate Bonds (TRACE)")
+        bond_df = dm.get_bond_transactions(current_ticker)
+        
+        if not bond_df.empty:
+            st.caption(f"Last Transaction: {bond_df['datetime'].max()}")
+            
+            # Scatter Plot of Yields over time
+            # Color by Volume or Bond Symbol
+            
+            fig_yld = go.Figure()
+            
+            # Top 10 most active bonds by volume
+            if 'bond_sym_id' in bond_df.columns:
+                top_bonds = bond_df.groupby('bond_sym_id')['entrd_vol_qt'].sum().nlargest(10).index.tolist()
+                plot_df = bond_df[bond_df['bond_sym_id'].isin(top_bonds)].copy()
+                
+                for b_sym in top_bonds:
+                    subset = plot_df[plot_df['bond_sym_id'] == b_sym].sort_values('datetime')
+                    fig_yld.add_trace(go.Scatter(
+                        x=subset['datetime'], 
+                        y=subset['yld_pt'],
+                        mode='markers',
+                        name=b_sym,
+                        marker=dict(size=5, opacity=0.7)
+                    ))
+            else:
+                fig_yld.add_trace(go.Scatter(
+                    x=bond_df['datetime'], 
+                    y=bond_df['yld_pt'], 
+                    mode='markers',
+                    marker=dict(color='orange', size=5, opacity=0.7)
+                ))
+                
+            fig_yld.update_layout(
+                title="Bond Yield History (Top 10 Active Issues)",
+                xaxis_title="Transaction Time",
+                yaxis_title="Yield (%)",
+                height=400,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig_yld, use_container_width=True)
+            
+            # Price History
+            st.subheader("Bond Price History")
+            fig_prc = go.Figure()
+             # Top 10 most active bonds by volume (reuse)
+            if 'bond_sym_id' in bond_df.columns:
+                 for b_sym in top_bonds:
+                    subset = plot_df[plot_df['bond_sym_id'] == b_sym].sort_values('datetime')
+                    fig_prc.add_trace(go.Scatter(
+                        x=subset['datetime'], 
+                        y=subset['rptd_pr'],
+                        mode='lines+markers',
+                        name=b_sym,
+                        marker=dict(size=4)
+                    ))
+            else:
+                 fig_prc.add_trace(go.Scatter(
+                    x=bond_df['datetime'], 
+                    y=bond_df['rptd_pr'], 
+                    mode='markers',
+                    name='Price'
+                ))
+            
+            fig_prc.update_layout(height=350, yaxis_title="Price ($)")
+            st.plotly_chart(fig_prc, use_container_width=True)
+
+            with st.expander("Recent Bond Transactions"):
+                st.dataframe(bond_df[['datetime', 'bond_sym_id', 'cusip_id', 'rptd_pr', 'yld_pt', 'entrd_vol_qt']].head(100))
+                
+        else:
+             st.info("No TRACE Corporate Bond data found.")
 
 with col2:
     st.subheader("Snapshot")
