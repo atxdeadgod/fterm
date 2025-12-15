@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 # Page Config
 st.set_page_config(
-    page_title="WRDS Financial Terminal Pro",
+    page_title="RGTERM",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -22,7 +22,7 @@ def get_manager():
 dm = get_manager()
 
 # Sidebar
-st.sidebar.title("Financial Terminal Pro")
+st.sidebar.title("RGTERM")
 
 # Ticker Selection
 @st.cache_data
@@ -79,7 +79,7 @@ if 'ticker' not in st.session_state:
 
 current_ticker = st.session_state['ticker']
 
-st.title(f"Make Money: {current_ticker}")
+st.title(f"{current_ticker}")
 
 # Fetch Data
 with st.spinner(f"Fetching data for {current_ticker}..."):
