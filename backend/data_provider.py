@@ -1150,6 +1150,49 @@ class DataManager:
         return pd.DataFrame()
 
 
+    def get_business_segments(self, ticker):
+        """
+        Fetch Business & Geographic Segments from Compustat (seg_annt).
+        Breakdown of Revenue and Operating Income.
+        """
+        cache_path = self._get_cache_path(ticker, "segments")
+        if self._is_cache_valid(ticker, "segments") and cache_path.exists():
+            return pd.read_parquet(cache_path)
+            
+        print(f"Fetching Business Segments for {ticker}...")
+        try:
+            db = self._get_conn()
+            gvkey = self._get_gvkey(ticker)
+            
+            if not gvkey:
+                return pd.DataFrame()
+                
+            # Fetch last 5 years of segment data
+            # stype: BUSSEG = Business Segment, GEOSEG = Geographic Segment
+            # Table: comp.wrds_segmerged (names: snms, sales: sales, op income: ops)
+            query = f"""
+                select datadate, stype, sid, snms, sales as sale, ops
+                from comp.wrds_segmerged
+                where gvkey = '{gvkey}'
+                and datadate >= current_date - interval '5 years'
+                order by datadate asc, stype, sid
+            """
+            
+            df = db.raw_sql(query)
+            
+            if not df.empty:
+                df['date'] = pd.to_datetime(df['datadate'])
+                # Convert to numeric
+                for col in ['sale', 'ops']:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+                    
+                df.to_parquet(cache_path)
+                return df
+                
+        except Exception as e:
+            print(f"Error fetching segments: {e}")
+            
+        return pd.DataFrame()
 
     def get_sector_index(self, ticker, start_date='2020-01-01'):
         """

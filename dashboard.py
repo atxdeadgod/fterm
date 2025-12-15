@@ -219,8 +219,8 @@ with col2:
     nav_options = [
         "Price & Performance", "Factor Analysis", "Peer Comparison", 
         "Fundamentals & Valuation", "Estimates", "Ownership & Shorts", 
-        "Debt & Credit", "News & Sentiment", "Governance", "Derivatives", 
-        "Corporate Bonds", "Macro & Fed News"
+        "Business Segments", "Debt & Credit", "News & Sentiment", 
+        "Governance", "Derivatives", "Corporate Bonds", "Macro & Fed News"
     ]
     selection = st.radio("Go to Module", nav_options, label_visibility="collapsed")
     
@@ -603,6 +603,63 @@ with col1:
             )
         else:
             st.info("No Insider Transaction data available.")
+
+    elif selection == "Business Segments":
+        st.subheader("Business & Geographic Segments (Compustat)")
+        seg_df = dm.get_business_segments(current_ticker)
+        
+        if not seg_df.empty:
+            # Filter latest year for donut chart
+            latest_date = seg_df['date'].max()
+            latest_df = seg_df[seg_df['date'] == latest_date]
+            
+            # 1. Revenue Mix (Business Segments)
+            bus_seg = latest_df[latest_df['stype'] == 'BUSSEG']
+            if not bus_seg.empty:
+                 c1, c2 = st.columns([1, 2])
+                 with c1:
+                     st.markdown(f"#### Revenue Mix ({latest_date.year})")
+                     fig_mix = go.Figure(data=[go.Pie(labels=bus_seg['snms'], values=bus_seg['sale'], hole=.4)])
+                     fig_mix.update_layout(height=350, margin=dict(t=0, b=0, l=0, r=0))
+                     st.plotly_chart(fig_mix, use_container_width=True)
+                 with c2:
+                     st.markdown("#### Segment Performance Trend")
+                     # Stacked Bar of Revenue over time (Business Segments)
+                     hist_bus = seg_df[seg_df['stype'] == 'BUSSEG']
+                     fig_trend = go.Figure()
+                     
+                     for seg_name in hist_bus['snms'].unique():
+                         subset = hist_bus[hist_bus['snms'] == seg_name]
+                         fig_trend.add_trace(go.Bar(x=subset['date'], y=subset['sale'], name=seg_name))
+                     
+                     fig_trend.update_layout(barmode='stack', title="Revenue by Business Segment", height=350)
+                     st.plotly_chart(fig_trend, use_container_width=True)
+            else:
+                st.info("No Business Segment breakdown available.")
+
+            st.markdown("---")
+
+            # 2. Geographic Segments
+            geo_seg = latest_df[latest_df['stype'] == 'GEOSEG']
+            if not geo_seg.empty:
+                 st.markdown("#### Geographic Revenue")
+                 # Grouped Bar or Stacked?
+                 hist_geo = seg_df[seg_df['stype'] == 'GEOSEG']
+                 
+                 # Plot only if meaningful
+                 fig_geo = go.Figure()
+                 for seg_name in hist_geo['snms'].unique():
+                     subset = hist_geo[hist_geo['snms'] == seg_name]
+                     fig_geo.add_trace(go.Bar(x=subset['date'], y=subset['sale'], name=seg_name))
+                     
+                 fig_geo.update_layout(barmode='stack', title="Revenue by Region", height=350)
+                 st.plotly_chart(fig_geo, use_container_width=True)
+            
+            with st.expander("Detailed Segment Data"):
+                st.dataframe(seg_df[['date', 'stype', 'snms', 'sale', 'ops']].sort_values(['date', 'stype']))
+                
+        else:
+            st.info("No Segment data found (Compustat seg_annt).")
 
     elif selection == "Debt & Credit":
         st.subheader("Corporate Debt & Credit (DealScan)")
