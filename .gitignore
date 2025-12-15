@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+
+# Mac
+.DS_Store
+
+# Project Cache
+cache/
+*.parquet
+
+# Environment Variables
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Virtual Env
+venv/
+env/
