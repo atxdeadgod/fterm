@@ -763,6 +763,141 @@ class DataManager:
 
         return pd.DataFrame()
 
+    def get_analyst_revisions(self, ticker):
+        """Fetch Analyst Revisions History (IBES Summary)"""
+        cache_path = self._get_cache_path(ticker, "analyst_revisions")
+        if self._is_cache_valid(ticker, "analyst_revisions") and cache_path.exists():
+            return pd.read_parquet(cache_path)
+
+        # IBES uses 'oftic' which is usually the ticker.
+        # However, it might vary. We'll search by oftic first.
+        
+        print(f"Fetching Analyst Revisions for {ticker}...")
+        db = self._get_conn()
+        
+        # statsum_epsus = US summary history
+        # statpers = Statistical Period (Snapshot Date)
+        # meanest = Mean Estimate
+        # measure='EPS'
+        # fpi='1' (Fiscal Period Indicator = 1 means Next Fiscal Year)
+        
+        start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
+        
+        query = f"""
+            select statpers, meanest, median, highest, lowest, numest, stdev
+            from tr_ibes.statsum_epsus
+            where oftic='{ticker}'
+            and measure='EPS'
+            and fpi='1'
+            and statpers >= '{start_date}'
+            order by statpers asc
+        """
+        try:
+            df = db.raw_sql(query, date_cols=['statpers'])
+            if not df.empty:
+                for c in ['meanest', 'median', 'highest', 'lowest', 'stdev', 'numest']:
+                    df[c] = pd.to_numeric(df[c], errors='coerce')
+                
+                df.to_parquet(cache_path)
+                return df
+        except Exception as e:
+            print(f"Error fetching Revisions: {e}")
+            
+        return pd.DataFrame()
+
+    def get_analyst_revisions(self, ticker):
+        """Fetch Analyst Revisions History (IBES Summary)"""
+        cache_path = self._get_cache_path(ticker, "analyst_revisions")
+        if self._is_cache_valid(ticker, "analyst_revisions") and cache_path.exists():
+            return pd.read_parquet(cache_path)
+
+        # IBES uses 'oftic' which is usually the ticker.
+        print(f"Fetching Analyst Revisions for {ticker}...")
+        db = self._get_conn()
+        
+        # statsum_epsus = US summary history
+        # statpers = Statistical Period (Snapshot Date)
+        # measure='EPS'
+        # fpi='1' (Fiscal Period Indicator = 1 means Next Fiscal Year)
+        
+        start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
+        
+        query = f"""
+            select statpers, meanest, medest, highest, lowest, numest, stdev
+            from tr_ibes.statsum_epsus
+            where oftic='{ticker}'
+            and measure='EPS'
+            and fpi='1'
+            and statpers >= '{start_date}'
+            order by statpers asc
+        """
+        try:
+            df = db.raw_sql(query, date_cols=['statpers'])
+            if not df.empty:
+                # Rename medest to median for consistency if preferred, OR keep medest
+                # In schema I saw 'medest'
+                for c in ['meanest', 'medest', 'highest', 'lowest', 'stdev', 'numest']:
+                    df[c] = pd.to_numeric(df[c], errors='coerce')
+                
+                df.to_parquet(cache_path)
+                return df
+        except Exception as e:
+            print(f"Error fetching Revisions: {e}")
+            
+        return pd.DataFrame()
+
+    def get_corporate_loans(self, ticker):
+        """Fetch Corporate Loan History from DealScan"""
+        cache_path = self._get_cache_path(ticker, "dealscan_loans")
+        if self._is_cache_valid(ticker, "dealscan_loans") and cache_path.exists():
+            return pd.read_parquet(cache_path)
+
+        print(f"Fetching DealScan Loans for {ticker}...")
+        db = self._get_conn()
+        
+        # 1. Resolve Ticker to CompanyID
+        # tr_dealscan.company table maps ticker to companyid
+        
+        q_id = f"select companyid from tr_dealscan.company where ticker='{ticker}'"
+        
+        try:
+            ids = db.raw_sql(q_id)
+            if ids.empty:
+                return pd.DataFrame()
+            
+            # There might be multiple IDs (subsidiaries), we'll take all matches
+            comp_ids = tuple(ids['companyid'].dropna().astype(str).tolist())
+            if not comp_ids:
+                return pd.DataFrame()
+            
+            # Format tuple for SQL IN clause
+            if len(comp_ids) == 1:
+                id_tuple = f"('{comp_ids[0]}')"
+            else:
+                id_tuple = str(comp_ids)
+            
+            # 2. Fetch Loan Packages
+            # tr_dealscan.package
+            
+            query = f"""
+                select dealactivedate, dealamount, currency, dealpurpose, dealstatus, company
+                from tr_dealscan.package
+                where borrowercompanyid in {id_tuple}
+                order by dealactivedate desc
+            """
+            
+            df = db.raw_sql(query, date_cols=['dealactivedate'])
+            
+            if not df.empty:
+                 df['dealamount'] = pd.to_numeric(df['dealamount'], errors='coerce')
+                 df.to_parquet(cache_path)
+                 return df
+                 
+        except Exception as e:
+            print(f"Error fetching DealScan: {e}")
+            
+        return pd.DataFrame()
+
     def get_sector_index(self, ticker, start_date='2020-01-01'):
         """
         Construct an equal-weighted sector index from SIC peers.

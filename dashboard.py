@@ -197,7 +197,7 @@ if not prices_filtered.empty:
 col1, col2 = st.columns([3, 1])
 
 with col1:
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Price & Performance", "Factor Analysis", "Peer Comparison", "Fundamentals & Valuation", "Estimates", "Ownership & Shorts"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["Price & Performance", "Factor Analysis", "Peer Comparison", "Fundamentals & Valuation", "Estimates", "Ownership & Shorts", "Debt & Credit"])
 
     with tab1:
         if not prices_filtered.empty:
@@ -438,11 +438,53 @@ with col1:
             st.info("No Fundamental Data Found")
 
     with tab5:
+        st.subheader("Analyst Estimates (LSEG/IBES)")
+        
+        # 1. Historical Revisions Chart
+        revisions_df = dm.get_analyst_revisions(current_ticker)
+        if not revisions_df.empty:
+             st.markdown("##### Consensus EPS Revisions (Next FY)")
+             
+             # Calculate 3M Trend
+             latest_mean = revisions_df.iloc[-1]['meanest']
+             
+             # Look back ~3 months (approx 90 days or 3 rows if monthly)
+             # statpers is approx monthly.
+             if len(revisions_df) >= 4:
+                 prev_mean = revisions_df.iloc[-4]['meanest']
+                 chg = (latest_mean - prev_mean) / abs(prev_mean) if prev_mean != 0 else 0
+                 st.metric("Mean Estimate (Next FY)", f"${latest_mean:.2f}", f"{chg:.1%} (3M Trend)")
+             else:
+                 st.metric("Mean Estimate (Next FY)", f"${latest_mean:.2f}")
+
+             fig_rev = go.Figure()
+             
+             # Forecast Range (High/Low)
+             fig_rev.add_trace(go.Scatter(
+                 x=revisions_df['statpers'], y=revisions_df['highest'],
+                 mode='lines', line=dict(width=0), showlegend=False, name='High'
+             ))
+             fig_rev.add_trace(go.Scatter(
+                 x=revisions_df['statpers'], y=revisions_df['lowest'],
+                 mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(0,100,255,0.1)', showlegend=True, name='Range (High-Low)'
+             ))
+             
+             # Mean Estimate
+             fig_rev.add_trace(go.Scatter(
+                 x=revisions_df['statpers'], y=revisions_df['meanest'],
+                 mode='lines', line=dict(color='blue', width=2), name='Mean Estimate'
+             ))
+             
+             fig_rev.update_layout(title=f"Analyst Consensus Trend ({current_ticker})", height=350, yaxis_title="EPS Estimate ($)")
+             st.plotly_chart(fig_rev, use_container_width=True)
+             
+             st.markdown("---")
+
         if not est_df.empty:
-            st.subheader("Analyst Estimates")
-            st.dataframe(est_df)
+            st.subheader("Detailed Estimates Snapshot")
+            st.dataframe(est_df.head(20))
         else:
-            st.info("No Estimates Data Found")
+            st.info("No Detailed Estimates Data Found")
 
     with tab6:
         st.subheader("Ownership & Short Interest")
@@ -504,6 +546,35 @@ with col1:
             )
         else:
             st.info("No Insider Transaction data available.")
+
+    with tab7:
+        st.subheader("Corporate Debt & Credit (DealScan)")
+        loan_df = dm.get_corporate_loans(current_ticker)
+        
+        if not loan_df.empty:
+            # Metrics
+            total_borrowed = loan_df['dealamount'].sum()
+            recent_deals = len(loan_df[loan_df['dealactivedate'] >= (datetime.now() - timedelta(days=365*3))])
+            
+            m1, m2 = st.columns(2)
+            m1.metric("Total Deal Volume (All History)", f"${total_borrowed:,.0f} M")
+            m2.metric("Deals (Last 3 Years)", recent_deals)
+            
+            # Chart
+            fig_loan = go.Figure()
+            fig_loan.add_trace(go.Bar(
+                x=loan_df['dealactivedate'], 
+                y=loan_df['dealamount'],
+                text=loan_df['dealpurpose'],
+                name='Deal Amount'
+            ))
+            fig_loan.update_layout(title="Capital Raising History (Syndicated Loans)", height=400, yaxis_title="Amount (Millions)")
+            st.plotly_chart(fig_loan, use_container_width=True)
+            
+            st.markdown("##### Detailed Loan Dictionary")
+            st.dataframe(loan_df[['dealactivedate', 'dealamount', 'currency', 'dealpurpose', 'dealstatus', 'company']], use_container_width=True)
+        else:
+            st.info("No DealScan Corporate Loan data found for this entity.")
 
 with col2:
     st.subheader("Snapshot")
