@@ -794,45 +794,6 @@ class DataManager:
         start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
         
         query = f"""
-            select statpers, meanest, median, highest, lowest, numest, stdev
-            from tr_ibes.statsum_epsus
-            where oftic='{ticker}'
-            and measure='EPS'
-            and fpi='1'
-            and statpers >= '{start_date}'
-            order by statpers asc
-        """
-        try:
-            df = db.raw_sql(query, date_cols=['statpers'])
-            if not df.empty:
-                for c in ['meanest', 'median', 'highest', 'lowest', 'stdev', 'numest']:
-                    df[c] = pd.to_numeric(df[c], errors='coerce')
-                
-                df.to_parquet(cache_path)
-                return df
-        except Exception as e:
-            print(f"Error fetching Revisions: {e}")
-            
-        return pd.DataFrame()
-
-    def get_analyst_revisions(self, ticker):
-        """Fetch Analyst Revisions History (IBES Summary)"""
-        cache_path = self._get_cache_path(ticker, "analyst_revisions")
-        if self._is_cache_valid(ticker, "analyst_revisions") and cache_path.exists():
-            return pd.read_parquet(cache_path)
-
-        # IBES uses 'oftic' which is usually the ticker.
-        print(f"Fetching Analyst Revisions for {ticker}...")
-        db = self._get_conn()
-        
-        # statsum_epsus = US summary history
-        # statpers = Statistical Period (Snapshot Date)
-        # measure='EPS'
-        # fpi='1' (Fiscal Period Indicator = 1 means Next Fiscal Year)
-        
-        start_date = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
-        
-        query = f"""
             select statpers, meanest, medest, highest, lowest, numest, stdev
             from tr_ibes.statsum_epsus
             where oftic='{ticker}'
@@ -844,8 +805,7 @@ class DataManager:
         try:
             df = db.raw_sql(query, date_cols=['statpers'])
             if not df.empty:
-                # Rename medest to median for consistency if preferred, OR keep medest
-                # In schema I saw 'medest'
+                df['date'] = pd.to_datetime(df['statpers'])
                 for c in ['meanest', 'medest', 'highest', 'lowest', 'stdev', 'numest']:
                     df[c] = pd.to_numeric(df[c], errors='coerce')
                 

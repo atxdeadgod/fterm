@@ -525,7 +525,18 @@ with col1:
         if not est_df.empty:
             st.subheader("Detailed Estimates Snapshot")
         if not est_df.empty:
-            st.dataframe(est_df.tail(10).sort_values('date', ascending=False))
+            # handle potential missing date column from stale cache
+            sort_col = 'date'
+            if 'date' not in est_df.columns:
+                if 'statpers' in est_df.columns:
+                    est_df['date'] = pd.to_datetime(est_df['statpers'])
+                else:
+                    sort_col = est_df.columns[0] # Fallback
+            
+            if sort_col in est_df.columns:
+                st.dataframe(est_df.tail(10).sort_values(sort_col, ascending=False))
+            else:
+                st.dataframe(est_df.tail(10))
         else:
             st.info("No Estimates Revisions Data Found")
             
