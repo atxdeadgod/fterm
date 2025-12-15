@@ -24,34 +24,24 @@ A professional-grade financial terminal built with Python and Streamlit, leverag
 
 ## Installation
 
-1.  Clone the repository:
+1.  **Clone the repository**:
     ```bash
-    git clone https://github.com/yourusername/fterm.git
+    git clone https://github.com/bhft/fterm.git
     cd fterm
     ```
 
-2.  Install dependencies:
+2.  **Install Dependencies**:
     ```bash
-    pip install streamlit pandas wrds plotly statsmodels scipy
+    pip install -r requirements.txt
     ```
 
-## Configuration
-
-You must set your WRDS credentials as environment variables before running the application.
-
-**Option 1: Export in Terminal (Temporary)**
-```bash
-export WRDS_USERNAME="your_username"
-export WRDS_PASSWORD="your_password"
-```
-
-**Option 2: Setup .env file (Recommended)**
-Create a `.env` file in the root directory (this file is git-ignored):
-```env
-WRDS_USERNAME=your_username
-WRDS_PASSWORD=your_password
-```
-*(Note: You may need `python-dotenv` if loading from file, current implementation relies on system env vars)*
+3.  **WRDS Credentials**:
+    *   Create a `.env` file or export environment variables:
+    ```bash
+    export WRDS_USERNAME="your_username"
+    export WRDS_PASSWORD="your_password"
+    ```
+    *   Alternatively, set up a `.pgpass` file for password-less connection.
 
 ## Usage
 
