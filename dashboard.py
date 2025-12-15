@@ -200,8 +200,13 @@ if not prices_filtered.empty:
 # Layout
 col1, col2 = st.columns([3, 1])
 
+
 with col1:
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(["Price & Performance", "Factor Analysis", "Peer Comparison", "Fundamentals & Valuation", "Estimates", "Ownership & Shorts", "Debt & Credit", "News & Sentiment", "Governance"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+        "Price & Performance", "Factor Analysis", "Peer Comparison", 
+        "Fundamentals & Valuation", "Estimates", "Ownership & Shorts", 
+        "Debt & Credit", "News & Sentiment", "Governance", "Derivatives"
+    ])
 
     with tab1:
         if not prices_filtered.empty:
@@ -683,6 +688,115 @@ with col1:
             
         else:
             st.info("No Governance data found.")
+
+    with tab10:
+        st.subheader("Derivatives & Volatility (OptionMetrics)")
+        vol_df = dm.get_volatility_surface(current_ticker)
+        
+        if not vol_df.empty:
+            st.caption(f"Surface Date: {vol_df['date'].max().strftime('%Y-%m-%d')}")
+            
+            # Volatility Smile Chart (IV vs Delta)
+            # Filter for specific maturities: e.g. 30 days, 91 days
+            # Plot Calls (Delta > 0) vs Puts (Delta < 0) or just map X axis
+            
+            # We want to show IV vs Delta for a few maturities.
+            # Delta ranges from -90 to 90 (approx). 
+            # We usually plot 'delta' on X and 'impl_vol' on Y.
+            
+            fig_smile = go.Figure()
+            
+            days_to_plot = [30, 91, 182]
+            colors = ['cyan', 'magenta', 'yellow']
+            
+            for i, d in enumerate(days_to_plot):
+                subset = vol_df[vol_df['days'] == d].sort_values('delta')
+                if not subset.empty:
+                    fig_smile.add_trace(go.Scatter(
+                        x=subset['delta'], 
+                        y=subset['impl_volatility'], 
+                        mode='lines+markers', 
+                        name=f'{d} Days',
+                        line=dict(color=colors[i % len(colors)])
+                    ))
+            
+            fig_smile.update_layout(
+                title="Volatility Smile (IV vs Delta)",
+                xaxis_title="Delta (Put < 0 < Call)",
+                yaxis_title="Implied Volatility",
+                height=400
+            )
+            st.plotly_chart(fig_smile, use_container_width=True)
+            
+            # Term Structure (ATM Volatility vs Days)
+            # ATM is roughly Delta 50 (Call) or Delta -50 (Put).
+            # Let's approximate ATM as closest to delta 50.
+            
+            # Filter for Calls around 50 delta
+            atm_subset = vol_df[
+                (vol_df['cp_flag'] == 'C') & 
+                (vol_df['delta'].between(45, 55))
+            ].sort_values('days')
+            
+            if not atm_subset.empty:
+                 st.subheader("Term Structure (ATM Volatility)")
+                 fig_term = go.Figure()
+                 fig_term.add_trace(go.Scatter(
+                     x=atm_subset['days'],
+                     y=atm_subset['impl_volatility'],
+                     mode='lines+markers',
+                     name='ATM IV (Call 50d)'
+                 ))
+                 fig_term.update_layout(xaxis_title="Days to Maturity", yaxis_title="Implied Volatility", height=300)
+                 st.plotly_chart(fig_term, use_container_width=True)
+            
+            with st.expander("Raw Volatility Surface Data"):
+                st.dataframe(vol_df)
+            
+            # --- Heatmap / Contour: Volatility Surface ---
+            st.subheader("Volatility Surface Heatmap")
+            
+            # Prepare data for Contour
+            # Pivot to create a grid: Index=Days, Columns=Delta, Values=Implied Vol
+            # We might need to round Delta to nearest integer to group them effectively
+            
+            heatmap_df = vol_df.copy()
+            heatmap_df['delta_rounded'] = heatmap_df['delta'].round(0)
+            
+            # Create pivot table
+            surf_pivot = heatmap_df.pivot_table(
+                index='days', 
+                columns='delta_rounded', 
+                values='impl_volatility', 
+                aggfunc='mean'
+            )
+            
+            if not surf_pivot.empty:
+                fig_surf = go.Figure(data=go.Contour(
+                    z=surf_pivot.values,
+                    x=surf_pivot.columns, # Delta
+                    y=surf_pivot.index,   # Days
+                    colorscale='Hot',
+                    colorbar=dict(title='Implied Volatility'),
+                    contours=dict(
+                        coloring='heatmap',
+                        showlabels=True, # Show IV numbers on lines
+                        labelfont=dict(size=10, color='white')
+                    )
+                ))
+                
+                fig_surf.update_layout(
+                    title="Volatility Surface (X=Delta, Y=Maturity, Color=IV)",
+                    xaxis_title="Delta (Moneyness)",
+                    yaxis_title="Days to Maturity",
+                    height=500
+                )
+                
+                st.plotly_chart(fig_surf, use_container_width=True)
+                st.caption("Detailed view of the Implied Volatility Surface. Higher temperatures indicate more expensive options (higher IV).")
+                
+        else:
+             st.info("No OptionMetrics Volatility Surface data found.")
 
 with col2:
     st.subheader("Snapshot")

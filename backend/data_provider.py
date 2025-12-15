@@ -1006,6 +1006,59 @@ class DataManager:
             
         return pd.DataFrame()
 
+    def get_volatility_surface(self, ticker):
+        """Fetch Implied Volatility Surface from OptionMetrics (optionm.vsurfd)"""
+        cache_path = self._get_cache_path(ticker, "option_vol_surf")
+        if self._is_cache_valid(ticker, "option_vol_surf") and cache_path.exists():
+             return pd.read_parquet(cache_path)
+
+        print(f"Fetching Volatility Surface for {ticker}...")
+        db = self._get_conn()
+        
+        # 1. Resolve Ticker to SECID (optionm.securd)
+        try:
+            q_secid = f"select secid from optionm.securd where ticker='{ticker}' limit 1"
+            secid_df = db.raw_sql(q_secid)
+            if secid_df.empty:
+                print(f"No OptionMetrics SECID found for {ticker}")
+                return pd.DataFrame()
+            secid = secid_df.iloc[0]['secid']
+        except Exception as e:
+            print(f"Error resolving SECID: {e}")
+            return pd.DataFrame()
+
+        # 2. Fetch Volatility Surface (optionm.vsurfd2025)
+        # Using 2025 table for latest data. Fallback logic could be added but 2025 is target.
+        # Columns: date, days, delta, impl_volatility, cp_flag
+        # cp_flag: C=Call, P=Put. Delta 50 Call ~ Delta -50 Put
+        
+        query = f"""
+            select date, days, delta, impl_volatility, cp_flag
+            from optionm.vsurfd2025
+            where secid={secid}
+            order by date desc
+            limit 1000
+        """
+        
+        try:
+            df = db.raw_sql(query, date_cols=['date'])
+            if not df.empty:
+                # Filter for the single latest date
+                latest_date = df['date'].max()
+                df = df[df['date'] == latest_date].copy()
+                
+                # Numeric conversion
+                df['impl_volatility'] = pd.to_numeric(df['impl_volatility'], errors='coerce')
+                df['delta'] = pd.to_numeric(df['delta'], errors='coerce')
+                df['days'] = pd.to_numeric(df['days'], errors='coerce')
+                
+                df.to_parquet(cache_path)
+                return df
+        except Exception as e:
+            print(f"Error fetching Vol Surface: {e}")
+            
+        return pd.DataFrame()
+
     def get_sector_index(self, ticker, start_date='2020-01-01'):
         """
         Construct an equal-weighted sector index from SIC peers.
