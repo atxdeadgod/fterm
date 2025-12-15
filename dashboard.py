@@ -110,11 +110,15 @@ with st.spinner(f"Fetching data for {current_ticker}..."):
         availability = {}
 
 # Filter Logic
-mask_p = (prices_df['date'] >= pd.to_datetime(start_date)) & (prices_df['date'] <= pd.to_datetime(end_date))
-prices_filtered = prices_df.loc[mask_p].copy()
+prices_filtered = pd.DataFrame()
+if not prices_df.empty and 'date' in prices_df.columns:
+    mask_p = (prices_df['date'] >= pd.to_datetime(start_date)) & (prices_df['date'] <= pd.to_datetime(end_date))
+    prices_filtered = prices_df.loc[mask_p].copy()
 
-mask_f = (factors_df['date'] >= pd.to_datetime(start_date)) & (factors_df['date'] <= pd.to_datetime(end_date))
-factors_filtered = factors_df.loc[mask_f].copy()
+factors_filtered = pd.DataFrame()
+if not factors_df.empty and 'date' in factors_df.columns:
+    mask_f = (factors_df['date'] >= pd.to_datetime(start_date)) & (factors_df['date'] <= pd.to_datetime(end_date))
+    factors_filtered = factors_df.loc[mask_f].copy()
 
 # Advanced Analysis: Regressions
 alpha = 0.0
@@ -197,7 +201,7 @@ if not prices_filtered.empty:
 col1, col2 = st.columns([3, 1])
 
 with col1:
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["Price & Performance", "Factor Analysis", "Peer Comparison", "Fundamentals & Valuation", "Estimates", "Ownership & Shorts", "Debt & Credit"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["Price & Performance", "Factor Analysis", "Peer Comparison", "Fundamentals & Valuation", "Estimates", "Ownership & Shorts", "Debt & Credit", "News & Sentiment"])
 
     with tab1:
         if not prices_filtered.empty:
@@ -575,6 +579,60 @@ with col1:
             st.dataframe(loan_df[['dealactivedate', 'dealamount', 'currency', 'dealpurpose', 'dealstatus', 'company']], use_container_width=True)
         else:
             st.info("No DealScan Corporate Loan data found for this entity.")
+
+    with tab8:
+        st.subheader("News Analytics & Sentiment (RavenPack)")
+        news_df = dm.get_news_sentiment(current_ticker)
+        
+        if not news_df.empty:
+            # 1. Sentiment Trend (Daily Average)
+            # Ensure correct date time
+            news_df['date'] = pd.to_datetime(news_df['timestamp_utc']).dt.date
+            daily_sentiment = news_df.groupby('date')['event_sentiment_score'].mean().reset_index()
+            
+            # Metric: Today's Sentiment
+            # ESS range: 0-100 (50 neutral/positive boundary depending on version, usually 50 is neutral)
+            latest_sent = daily_sentiment.iloc[-1]['event_sentiment_score']
+            latest_date = daily_sentiment.iloc[-1]['date']
+            
+            # Color logic
+            color_delta = "normal"
+            if latest_sent > 50: color_delta = "normal" # Streamlit handles green for positive delta manually if needed
+            
+            st.metric("Latest Sentiment Score (0-100)", f"{latest_sent:.1f}", f"Date: {latest_date}")
+            
+            # Chart
+            fig_sent = go.Figure()
+            fig_sent.add_trace(go.Bar(
+                x=daily_sentiment['date'], 
+                y=daily_sentiment['event_sentiment_score'],
+                marker_color=['green' if v > 50 else 'red' for v in daily_sentiment['event_sentiment_score']],
+                name='Daily Sentiment'
+            ))
+            fig_sent.add_hline(y=50, line_dash="dash", line_color="gray", annotation_text="Neutral (50)")
+            fig_sent.update_layout(title="Daily News Sentiment Trend", height=350, yaxis=dict(range=[0, 100]))
+            st.plotly_chart(fig_sent, use_container_width=True)
+            
+            st.markdown("---")
+            st.markdown("##### Real-time News Feed")
+            
+            # Display News Feed with color coding
+            # Streamlit dataframe doesn't support row coloring easily, so we'll iterate
+            # Or just show a nice table
+            
+            # Filter cols
+            display_news = news_df[['timestamp_utc', 'headline', 'event_sentiment_score', 'topic', 'group']].head(20)
+            
+            # Custom formatting
+            st.dataframe(
+                display_news.style.applymap(
+                    lambda x: 'color: green' if x > 50 else 'color: red', subset=['event_sentiment_score']
+                ),
+                use_container_width=True
+            )
+            
+        else:
+            st.info("No RavenPack News data found (checking 2024-2025 history).")
 
 with col2:
     st.subheader("Snapshot")

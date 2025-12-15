@@ -898,6 +898,66 @@ class DataManager:
             
         return pd.DataFrame()
 
+    def get_news_sentiment(self, ticker):
+        """Fetch News & Sentiment from RavenPack (2023)"""
+        cache_path = self._get_cache_path(ticker, "ravenpack_news")
+        if self._is_cache_valid(ticker, "ravenpack_news") and cache_path.exists():
+            return pd.read_parquet(cache_path)
+
+        print(f"Fetching RavenPack News for {ticker}...")
+        db = self._get_conn()
+        
+        # 1. Resolve Ticker to RP Entity ID
+        # ravenpack_common.rpa_entity_mappings
+        # data_type='TICKER', data_value=ticker
+        
+        q_id = f"""
+            select rp_entity_id 
+            from ravenpack_common.rpa_entity_mappings 
+            where data_type='TICKER' 
+            and data_value='{ticker}'
+            limit 1
+        """
+        
+        try:
+            ids = db.raw_sql(q_id)
+            if ids.empty:
+                print(f"No RavenPack Entity ID found for {ticker}")
+                return pd.DataFrame()
+            
+            rp_id = ids.iloc[0]['rp_entity_id']
+            
+            # 2. Fetch News from 2024 and 2025 Tables
+            # rp_entity_id match
+            # event_relevance > 75 (High relevance)
+            # We union them to get the textstream
+            
+            query = f"""
+                select timestamp_utc, headline, event_sentiment_score, event_relevance, topic, "group"
+                from ravenpack_full.rpa_full_equities_2025
+                where rp_entity_id='{rp_id}'
+                and event_relevance >= 75
+                union all
+                select timestamp_utc, headline, event_sentiment_score, event_relevance, topic, "group"
+                from ravenpack_full.rpa_full_equities_2024
+                where rp_entity_id='{rp_id}'
+                and event_relevance >= 75
+                order by timestamp_utc desc
+                limit 100
+            """
+            
+            df = db.raw_sql(query, date_cols=['timestamp_utc'])
+            
+            if not df.empty:
+                 df['event_sentiment_score'] = pd.to_numeric(df['event_sentiment_score'], errors='coerce')
+                 df.to_parquet(cache_path)
+                 return df
+                 
+        except Exception as e:
+            print(f"Error fetching RavenPack: {e}")
+            
+        return pd.DataFrame()
+
     def get_sector_index(self, ticker, start_date='2020-01-01'):
         """
         Construct an equal-weighted sector index from SIC peers.
