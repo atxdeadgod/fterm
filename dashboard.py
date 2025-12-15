@@ -201,15 +201,15 @@ if not prices_filtered.empty:
 col1, col2 = st.columns([3, 1])
 
 with col1:
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["Price & Performance", "Factor Analysis", "Peer Comparison", "Fundamentals & Valuation", "Estimates", "Ownership & Shorts", "Debt & Credit", "News & Sentiment"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(["Price & Performance", "Factor Analysis", "Peer Comparison", "Fundamentals & Valuation", "Estimates", "Ownership & Shorts", "Debt & Credit", "News & Sentiment", "Governance"])
 
     with tab1:
         if not prices_filtered.empty:
             col_chart, col_metrics = st.columns([3, 1])
             with col_chart:
-                 st.subheader("Price History")
+                 st.subheader("Price History (Split-Adjusted)")
                  fig = go.Figure()
-                 fig.add_trace(go.Scatter(x=prices_filtered['date'], y=prices_filtered['prc'], mode='lines', name='Price'))
+                 fig.add_trace(go.Scatter(x=prices_filtered['date'], y=prices_filtered['adj_close'], mode='lines', name='Price'))
                  fig.update_layout(height=350, margin=dict(l=0,r=0,t=0,b=0))
                  st.plotly_chart(fig, use_container_width=True)
                  
@@ -625,14 +625,64 @@ with col1:
             
             # Custom formatting
             st.dataframe(
-                display_news.style.applymap(
-                    lambda x: 'color: green' if x > 50 else 'color: red', subset=['event_sentiment_score']
+                display_news.style.map(
+                    lambda x: 'color: green' if (pd.notna(x) and x > 50) else 'color: red', subset=['event_sentiment_score']
                 ),
                 use_container_width=True
             )
             
         else:
             st.info("No RavenPack News data found (checking 2024-2025 history).")
+
+    with tab9:
+        st.subheader("Governance & Shareholder Rights (RiskMetrics)")
+        gov_df = dm.get_governance_profile(current_ticker)
+        
+        if not gov_df.empty:
+            gov = gov_df.iloc[0]
+            st.caption(f"Data Year: {gov['year']}")
+            
+            # Helper to safely check YES
+            def check_yes(val):
+                if pd.isna(val): return False
+                return str(val).upper() == 'YES'
+
+            c1, c2, c3 = st.columns(3)
+            
+            with c1:
+                st.markdown("**Board Structure**")
+                # Classified Board
+                is_staggered = "YES" if check_yes(gov['cboard']) else "NO"
+                color = "red" if is_staggered == "YES" else "green"
+                st.markdown(f"Classified Board: :{color}[**{is_staggered}**]")
+            
+            with c2:
+                st.markdown("**Defenses**")
+                # Poison Pill
+                has_pill = "YES" if check_yes(gov['ppill']) else "NO"
+                color_p = "red" if has_pill == "YES" else "green"
+                st.markdown(f"Poison Pill: :{color_p}[**{has_pill}**]")
+                
+                # Golden Parachute
+                has_gp = "YES" if check_yes(gov['gparachute']) else "NO"
+                st.markdown(f"Golden Parachute: **{has_gp}**")
+            
+            with c3:
+                st.markdown("**Voting Rights**")
+                # Dual Class
+                is_dual = "YES" if check_yes(gov['dualclass']) else "NO"
+                color_d = "red" if is_dual == "YES" else "green"
+                st.markdown(f"Dual Class: :{color_d}[**{is_dual}**]")
+                
+                # Confidential Voting
+                conf_vote = gov['confvote'] if pd.notna(gov['confvote']) else "N/A"
+                st.markdown(f"Confidential Voting: **{conf_vote}**")
+                
+            st.markdown("---")
+            st.info("Metrics provided by ISS/RiskMetrics. 'YES' in Board/Defenses often indicates lower shareholder rights index.")
+            
+        else:
+            st.info("No Governance data found.")
 
 with col2:
     st.subheader("Snapshot")

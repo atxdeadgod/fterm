@@ -181,17 +181,22 @@ class DataManager:
             df['ajexdi'] = df['ajexdi'].fillna(1.0)
             df['trfd'] = df['trfd'].fillna(1.0)
             
-            # Adjusted Price for Returns
+            # Adjusted Price for Returns (Total Return)
             # prc_adj = prc / ajexdi * trfd
-            # Return = prc_adj.pct_change()
-            df['prc_adj'] = df['prc'] / df['ajexdi'] * df['trfd']
-            df['ret'] = df['prc_adj'].pct_change()
+            # Standard Split-Adjusted Price (for Charting) = prc / ajexdi
+            
+            df = df[df['prc'] > 0].copy() # Filter invalid prices
+            
+            df['adj_close'] = df['prc'] / df['ajexdi']
+            df['tot_ret_idx'] = df['prc'] / df['ajexdi'] * df['trfd'] # Total Return Index concept
+            
+            df['ret'] = df['tot_ret_idx'].pct_change()
             
             # Fill first ret with 0 or NaN
             df['ret'] = df['ret'].fillna(0.0)
             
             # Drop adjustment cols if not needed
-            df = df[['date', 'prc', 'vol', 'ret', 'shrout']]
+            df = df[['date', 'prc', 'adj_close', 'vol', 'ret', 'shrout']]
             
             # Save to cache
             df.to_parquet(cache_path)
@@ -925,23 +930,29 @@ class DataManager:
                 print(f"No RavenPack Entity ID found for {ticker}")
                 return pd.DataFrame()
             
-            rp_id = ids.iloc[0]['rp_entity_id']
+            # Fetch all IDs
+            rp_ids = tuple(ids['rp_entity_id'].unique().tolist())
             
+            if len(rp_ids) == 1:
+                id_tuple = f"('{rp_ids[0]}')"
+            else:
+                id_tuple = str(rp_ids)
+
             # 2. Fetch News from 2024 and 2025 Tables
             # rp_entity_id match
-            # event_relevance > 75 (High relevance)
+            # event_relevance > 50 (Reasonable relevance)
             # We union them to get the textstream
             
             query = f"""
                 select timestamp_utc, headline, event_sentiment_score, event_relevance, topic, "group"
                 from ravenpack_full.rpa_full_equities_2025
-                where rp_entity_id='{rp_id}'
-                and event_relevance >= 75
+                where rp_entity_id in {id_tuple}
+                and event_relevance >= 50
                 union all
                 select timestamp_utc, headline, event_sentiment_score, event_relevance, topic, "group"
                 from ravenpack_full.rpa_full_equities_2024
-                where rp_entity_id='{rp_id}'
-                and event_relevance >= 75
+                where rp_entity_id in {id_tuple}
+                and event_relevance >= 50
                 order by timestamp_utc desc
                 limit 100
             """
@@ -955,6 +966,38 @@ class DataManager:
                  
         except Exception as e:
             print(f"Error fetching RavenPack: {e}")
+            
+        return pd.DataFrame()
+
+    def get_governance_profile(self, ticker):
+        """Fetch Governance Profile from RiskMetrics (ISS)"""
+        cache_path = self._get_cache_path(ticker, "risk_governance")
+        if self._is_cache_valid(ticker, "risk_governance") and cache_path.exists():
+            return pd.read_parquet(cache_path)
+
+        print(f"Fetching Governance Profile for {ticker}...")
+        db = self._get_conn()
+        
+        # risk.rmgovernance
+        # year, dualclass, cboard, ppill, gparachute, confvote, cumvote
+        
+        query = f"""
+            select year, dualclass, cboard, ppill, gparachute, confvote, cumvote
+            from risk.rmgovernance
+            where ticker='{ticker}'
+            order by year desc
+            limit 1
+        """
+        
+        try:
+            df = db.raw_sql(query)
+            
+            if not df.empty:
+                 df.to_parquet(cache_path)
+                 return df
+                 
+        except Exception as e:
+            print(f"Error fetching Governance: {e}")
             
         return pd.DataFrame()
 
