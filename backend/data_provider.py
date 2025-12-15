@@ -159,6 +159,11 @@ class DataManager:
             from comp.secd 
             where gvkey='{gvkey}' 
             and datadate >= '{start_date}'
+            and iid = (
+                select iid from comp.secd 
+                where gvkey='{gvkey}' 
+                order by cshtrd desc limit 1
+            )
             order by datadate asc
         """
         try:
