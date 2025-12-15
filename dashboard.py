@@ -115,6 +115,15 @@ if not prices_df.empty and 'date' in prices_df.columns:
     mask_p = (prices_df['date'] >= pd.to_datetime(start_date)) & (prices_df['date'] <= pd.to_datetime(end_date))
     prices_filtered = prices_df.loc[mask_p].copy()
 
+# Standardize Fundamentals Date & Columns (Global Fix)
+if not fund_df.empty:
+    if 'date' not in fund_df.columns and 'datadate' in fund_df.columns:
+        fund_df['date'] = pd.to_datetime(fund_df['datadate'])
+    if 'sale' not in fund_df.columns and 'saleq' in fund_df.columns:
+        fund_df['sale'] = fund_df['saleq']
+    if 'ni' not in fund_df.columns and 'niq' in fund_df.columns:
+        fund_df['ni'] = fund_df['niq']
+
 factors_filtered = pd.DataFrame()
 if not factors_df.empty and 'date' in factors_df.columns:
     mask_f = (factors_df['date'] >= pd.to_datetime(start_date)) & (factors_df['date'] <= pd.to_datetime(end_date))
@@ -204,18 +213,31 @@ if not prices_filtered.empty:
 # Layout
 col1, col2 = st.columns([3, 1])
 
-
-
-
-with col1:
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
+# Navigation (Right Column)
+with col2:
+    st.subheader("Navigation")
+    nav_options = [
         "Price & Performance", "Factor Analysis", "Peer Comparison", 
         "Fundamentals & Valuation", "Estimates", "Ownership & Shorts", 
         "Debt & Credit", "News & Sentiment", "Governance", "Derivatives", 
         "Corporate Bonds", "Macro & Fed News"
-    ])
+    ]
+    selection = st.radio("Go to Module", nav_options, label_visibility="collapsed")
+    
+    st.markdown("---")
+    st.subheader("Snapshot")
+    if not fund_df.empty and not prices_df.empty:
+        last_price = prices_df.iloc[-1]['prc']
+        shares = fund_df.iloc[0]['cshoq'] if 'cshoq' in fund_df.columns else 0
+        mkt_cap = last_price * shares
+        st.metric("Last Price", f"${last_price:,.2f}")
+        st.metric("Mkt Cap", f"${mkt_cap:,.2f} M")
+        st.metric("Total Return", f"{total_return:.2%}")
+        st.metric("Ann. Volatility", f"{volatility:.2%}")
 
-    with tab1:
+# Main Content (Left Column)
+with col1:
+    if selection == "Price & Performance":
         if not prices_filtered.empty:
             col_chart, col_metrics = st.columns([3, 1])
             with col_chart:
@@ -240,7 +262,7 @@ with col1:
         else:
             st.warning("No Price Data for selected range")
 
-    with tab2:
+    elif selection == "Factor Analysis":
         st.subheader("Advanced Factor Analysis (FF5 + Momentum + Sector)")
         
         # Update Factors to FF6
@@ -350,7 +372,7 @@ with col1:
         else:
             st.warning("Insufficient data for Advanced Factors")
 
-    with tab3:
+    elif selection == "Peer Comparison":
         st.subheader("Peer Group Analysis (SIC)")
         
         peers = dm.get_sic_peers(current_ticker)
@@ -372,9 +394,13 @@ with col1:
                 bulk_df['Equity'] = bulk_df['atq'] - bulk_df['ltq']
                 bulk_df['ROE'] = bulk_df['niq'] / bulk_df['Equity']
                 
-                # Display table
-                display_cols = ['tic', 'datadate', 'atq', 'niq', 'ROE', 'EPS_Ann']
-                st.dataframe(bulk_df[display_cols].sort_values('atq', ascending=False).head(20))
+                # Display table (Safe)
+                if 'datadate' in bulk_df.columns and 'date' not in bulk_df.columns:
+                    bulk_df['date'] = pd.to_datetime(bulk_df['datadate'])
+
+                display_cols = ['tic', 'date', 'atq', 'niq', 'ROE', 'EPS_Ann']
+                actual_cols = [c for c in display_cols if c in bulk_df.columns]
+                st.dataframe(bulk_df[actual_cols].sort_values('atq', ascending=False).head(20))
                 
                 # Highlight Target Rank
                 target_roe = bulk_df[bulk_df['tic'] == current_ticker]['ROE'].values
@@ -387,7 +413,7 @@ with col1:
         else:
             st.info("No peers found or SIC code missing.")
 
-    with tab4:
+    elif selection == "Fundamentals & Valuation":
         if not fund_df.empty:
             st.subheader("Deep Fundamentals & Valuation")
             
@@ -453,7 +479,7 @@ with col1:
         else:
             st.info("No Fundamental Data Found")
 
-    with tab5:
+    elif selection == "Estimates":
         st.subheader("Analyst Estimates (LSEG/IBES)")
         
         # 1. Historical Revisions Chart
@@ -502,7 +528,7 @@ with col1:
         else:
             st.info("No Detailed Estimates Data Found")
 
-    with tab6:
+    elif selection == "Ownership & Shorts":
         st.subheader("Ownership & Short Interest")
         
         col_short, col_inst = st.columns(2)
@@ -526,13 +552,23 @@ with col1:
             st.markdown("##### Institutional Holdings (13F)")
             inst_df = dm.get_institutional_holdings(current_ticker)
             if not inst_df.empty:
-                latest_inst = inst_df.iloc[-1]
-                st.metric("Total Inst. Shares", f"{latest_inst['total_shares']:,.0f}", f"Institutions: {latest_inst['num_institutions']}")
+                # Fix Date
+                d_col = 'fdate' if 'fdate' in inst_df.columns else 'rdate'
+                s_col = 'total_shares' if 'total_shares' in inst_df.columns else 'shares'
                 
-                fig_inst = go.Figure()
-                fig_inst.add_trace(go.Scatter(x=inst_df['fdate'], y=inst_df['total_shares'], name='Shares Held'))
-                fig_inst.update_layout(title="Institutional Shares Held", height=300)
-                st.plotly_chart(fig_inst, use_container_width=True)
+                if d_col in inst_df.columns:
+                     latest_inst = inst_df.sort_values(d_col).iloc[-1]
+                     # Check columns exist
+                     ts = latest_inst[s_col] if s_col in latest_inst else 0
+                     ni = latest_inst['num_institutions'] if 'num_institutions' in latest_inst else 0
+                     st.metric("Total Inst. Shares", f"{ts:,.0f}", f"Institutions: {ni}")
+                    
+                     fig_inst = go.Figure()
+                     fig_inst.add_trace(go.Scatter(x=inst_df[d_col], y=inst_df[s_col] if s_col in inst_df.columns else 0, name='Shares Held'))
+                     fig_inst.update_layout(title="Institutional Shares Held", height=300)
+                     st.plotly_chart(fig_inst, use_container_width=True)
+                else:
+                     st.dataframe(inst_df.head())
             else:
                 st.info("No Institutional data available.")
         
@@ -540,6 +576,9 @@ with col1:
         st.markdown("##### Insider Transactions")
         insider_df = dm.get_insider_transactions(current_ticker)
         if not insider_df.empty:
+            # Fix PersonID
+            pid = 'personid' if 'personid' in insider_df.columns else 'personID'
+            
             # Chart: Net Buy/Sell Value
             # Aggregate by day for chart
             daily_insider = insider_df.groupby('trandate')['signed_value'].sum().reset_index()
@@ -556,14 +595,16 @@ with col1:
             st.plotly_chart(fig_insider, use_container_width=True)
             
             # Table
+            cols_i = ['trandate', pid, 'rolecode1', 'acqdisp', 'shares', 'tprice', 'value']
+            actual_i = [c for c in cols_i if c in insider_df.columns]
             st.dataframe(
-                insider_df[['trandate', 'personid', 'rolecode1', 'acqdisp', 'shares', 'tprice', 'value']].head(50),
+                insider_df[actual_i].head(50),
                 use_container_width=True
             )
         else:
             st.info("No Insider Transaction data available.")
 
-    with tab7:
+    elif selection == "Debt & Credit":
         st.subheader("Corporate Debt & Credit (DealScan)")
         loan_df = dm.get_corporate_loans(current_ticker)
         
@@ -577,13 +618,17 @@ with col1:
             m2.metric("Deals (Last 3 Years)", recent_deals)
             
             # Chart
-            fig_loan = go.Figure()
-            fig_loan.add_trace(go.Bar(
-                x=loan_df['dealactivedate'], 
-                y=loan_df['dealamount'],
-                text=loan_df['dealpurpose'],
-                name='Deal Amount'
-            ))
+            d_col = 'dealactivedate' if 'dealactivedate' in loan_df.columns else 'tranche_start_date'
+            p_col = 'dealpurpose' if 'dealpurpose' in loan_df.columns else 'primary_purpose'
+            
+            if d_col in loan_df.columns:
+                fig_loan = go.Figure()
+                fig_loan.add_trace(go.Bar(
+                    x=loan_df[d_col], 
+                    y=loan_df['dealamount'],
+                    text=loan_df[p_col] if p_col in loan_df.columns else '',
+                    name='Deal Amount'
+                ))
             fig_loan.update_layout(title="Capital Raising History (Syndicated Loans)", height=400, yaxis_title="Amount (Millions)")
             st.plotly_chart(fig_loan, use_container_width=True)
             
@@ -592,14 +637,18 @@ with col1:
         else:
             st.info("No DealScan Corporate Loan data found for this entity.")
 
-    with tab8:
+    elif selection == "News & Sentiment":
         st.subheader("News Analytics & Sentiment (RavenPack)")
         news_df = dm.get_news_sentiment(current_ticker)
         
         if not news_df.empty:
             # 1. Sentiment Trend (Daily Average)
             # Ensure correct date time
-            news_df['date'] = pd.to_datetime(news_df['timestamp_utc']).dt.date
+            if 'timestamp_utc' in news_df.columns:
+                 news_df['date'] = pd.to_datetime(news_df['timestamp_utc']).dt.date
+            elif 'date' not in news_df.columns:
+                 # Fallback
+                 news_df['date'] = datetime.today().date()
             daily_sentiment = news_df.groupby('date')['event_sentiment_score'].mean().reset_index()
             
             # Metric: Today's Sentiment
@@ -646,7 +695,7 @@ with col1:
         else:
             st.info("No RavenPack News data found (checking 2024-2025 history).")
 
-    with tab9:
+    elif selection == "Governance":
         st.subheader("Governance & Shareholder Rights (RiskMetrics)")
         gov_df = dm.get_governance_profile(current_ticker)
         
@@ -696,7 +745,7 @@ with col1:
         else:
             st.info("No Governance data found.")
 
-    with tab10:
+    elif selection == "Derivatives":
         st.subheader("Derivatives & Volatility (OptionMetrics)")
         vol_df = dm.get_volatility_surface(current_ticker)
         
@@ -805,7 +854,7 @@ with col1:
         else:
              st.info("No OptionMetrics Volatility Surface data found.")
     
-    with tab11:
+    elif selection == "Corporate Bonds":
         st.subheader("Corporate Bonds (TRACE)")
         bond_df = dm.get_bond_transactions(current_ticker)
         
@@ -879,7 +928,7 @@ with col1:
         else:
              st.info("No TRACE Corporate Bond data found.")
 
-    with tab12:
+    elif selection == "Macro & Fed News":
         st.subheader("Macroeconomic Cockpit (Federal Reserve)")
         
         col_macro_1, col_macro_2 = st.columns([2, 1])
@@ -933,16 +982,4 @@ with col1:
                 st.info("No recent Federal Reserve news found in RavenPack.")
                 st.caption("Note: Filtering for 'Federal Reserve System' entity events.")
 
-with col2:
-    st.subheader("Snapshot")
-    if not fund_df.empty and not prices_df.empty:
-        last_price = prices_df.iloc[-1]['prc']
-        shares = fund_df.iloc[0]['cshoq'] if 'cshoq' in fund_df.columns else 0
-        mkt_cap = last_price * shares
-        
-        st.metric("Last Price", f"${last_price:,.2f}")
-        st.metric("Mkt Cap", f"${mkt_cap:,.2f} M")
-        
-    st.markdown("---")
-    st.markdown("**Data Status**")
-    st.success("Connected to Local Cache")
+# Removed duplicate Snapshot (Nav moved to right column)
