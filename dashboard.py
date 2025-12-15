@@ -187,15 +187,19 @@ total_return = 0.0
 volatility = 0.0
 
 if not prices_filtered.empty:
-    current_price = prices_filtered.iloc[-1]['prc']
+    current_price = prices_filtered.iloc[-1]['prc'] # Display Raw Price
+    
     if len(prices_filtered) > 1:
-        start_p = prices_filtered.iloc[0]['prc']
-        total_return = (current_price / start_p) - 1 if start_p != 0 else 0.0
+        # Use Adjusted Close for Return Calculation to handle Splits
+        start_p_adj = prices_filtered.iloc[0]['adj_close']
+        end_p_adj = prices_filtered.iloc[-1]['adj_close']
+        
+        total_return = (end_p_adj / start_p_adj) - 1 if start_p_adj != 0 else 0.0
         
         if 'ret' in prices_filtered.columns:
              volatility = prices_filtered['ret'].std() * (252**0.5)
         else:
-             volatility = prices_filtered['prc'].pct_change().std() * (252**0.5)
+             volatility = prices_filtered['adj_close'].pct_change().std() * (252**0.5)
 
 # Layout
 col1, col2 = st.columns([3, 1])
