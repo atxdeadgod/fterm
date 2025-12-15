@@ -931,55 +931,35 @@ with col1:
     elif selection == "Macro & Fed News":
         st.subheader("Macroeconomic Cockpit (Federal Reserve)")
         
-        col_macro_1, col_macro_2 = st.columns([2, 1])
+        macro_df = dm.get_macro_data(start_date=(datetime.now() - timedelta(days=365*5)).strftime('%Y-%m-%d'))
         
-        with col_macro_1:
-            macro_df = dm.get_macro_data(start_date=(datetime.now() - timedelta(days=365*5)).strftime('%Y-%m-%d'))
+        if not macro_df.empty:
+            # 1. Yield Curve Inversion (10Y - 2Y)
+            st.markdown("#### Yield Curve (10Y - 2Y Spread)")
+            st.caption("Negative values (Inversion) often predict recessions.")
             
-            if not macro_df.empty:
-                # 1. Yield Curve Inversion (10Y - 2Y)
-                # Area chart: Green > 0, Red < 0 ideally.
-                st.markdown("#### Yield Curve (10Y - 2Y Spread)")
-                st.caption("Negative values (Inversion) often predict recessions.")
-                
-                fig_yc = go.Figure()
-                fig_yc.add_trace(go.Scatter(
-                    x=macro_df['date'], 
-                    y=macro_df['t10y2y'],
-                    fill='tozeroy',
-                    name='10Y-2Y Spread',
-                    line=dict(color='gray')
-                ))
-                # Add horizontal line at 0
-                fig_yc.add_hline(y=0, line_dash="dash", line_color="red")
-                fig_yc.update_layout(height=300, margin=dict(t=0, b=0, l=0, r=0))
-                st.plotly_chart(fig_yc, use_container_width=True)
-                
-                # 2. Key Rates (Fed Funds vs 10Y)
-                st.markdown("#### Key Interest Rates")
-                fig_rates = go.Figure()
-                fig_rates.add_trace(go.Scatter(x=macro_df['date'], y=macro_df['dff'], name='Fed Funds Rate'))
-                fig_rates.add_trace(go.Scatter(x=macro_df['date'], y=macro_df['dgs10'], name='10Y Treasury'))
-                fig_rates.add_trace(go.Scatter(x=macro_df['date'], y=macro_df['bamlh0a0hym2ey'], name='High Yield Index', line=dict(dash='dot')))
-                fig_rates.update_layout(height=300, margin=dict(t=0, b=0), hovermode="x unified")
-                st.plotly_chart(fig_rates, use_container_width=True)
-                
-            else:
-                st.info("No Macro Data (FRB) found.")
-                
-        with col_macro_2:
-            st.markdown("#### Federal Reserve News")
-            fed_news = dm.get_fed_news()
+            fig_yc = go.Figure()
+            fig_yc.add_trace(go.Scatter(
+                x=macro_df['date'], 
+                y=macro_df['t10y2y'],
+                fill='tozeroy',
+                name='10Y-2Y Spread',
+                line=dict(color='gray')
+            ))
+            fig_yc.add_hline(y=0, line_dash="dash", line_color="red")
+            fig_yc.update_layout(height=400, margin=dict(t=0, b=0, l=0, r=0))
+            st.plotly_chart(fig_yc, use_container_width=True)
             
-            if not fed_news.empty:
-                for _, row in fed_news.iterrows():
-                    sentiment_color = "green" if row['event_sentiment_score'] > 0 else "red" if row['event_sentiment_score'] < 0 else "gray"
-                    with st.container():
-                        st.markdown(f"**{row['headline']}**")
-                        st.markdown(f"<span style='color:{sentiment_color}'>S: {row['event_sentiment_score']:.2f}</span> | {row['date'].strftime('%Y-%m-%d %H:%M')}", unsafe_allow_html=True)
-                        st.divider()
-            else:
-                st.info("No recent Federal Reserve news found in RavenPack.")
-                st.caption("Note: Filtering for 'Federal Reserve System' entity events.")
+            # 2. Key Rates
+            st.markdown("#### Key Interest Rates")
+            fig_rates = go.Figure()
+            fig_rates.add_trace(go.Scatter(x=macro_df['date'], y=macro_df['dff'], name='Fed Funds Rate'))
+            fig_rates.add_trace(go.Scatter(x=macro_df['date'], y=macro_df['dgs10'], name='10Y Treasury'))
+            fig_rates.add_trace(go.Scatter(x=macro_df['date'], y=macro_df['bamlh0a0hym2ey'], name='High Yield Index', line=dict(dash='dot')))
+            fig_rates.update_layout(height=400, margin=dict(t=0, b=0), hovermode="x unified")
+            st.plotly_chart(fig_rates, use_container_width=True)
+            
+        else:
+            st.info("No Macro Data (FRB) found.")
 
 # Removed duplicate Snapshot (Nav moved to right column)

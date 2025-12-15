@@ -1149,51 +1149,7 @@ class DataManager:
             
         return pd.DataFrame()
 
-    def get_fed_news(self):
-        """Fetch Federal Reserve News from RavenPack"""
-        # We don't cache this strictly per ticker, but globally for the session or short term
-        # But to keep simple, we'll cache it under 'FED' ticker
-        cache_path = self._get_cache_path("FED", "fed_news")
-        if self._is_cache_valid("FED", "fed_news") and cache_path.exists():
-             return pd.read_parquet(cache_path)
 
-        print(f"Fetching Federal Reserve News...")
-        db = self._get_conn()
-        
-        # Query for Federal Reserve System entity or headline text
-        # Using 2024/2025 like before
-        
-        tables = ['ravenpack_all.rpa_daily_2025', 'ravenpack_all.rpa_daily_2024']
-        
-        dfs = []
-        for tbl in tables:
-            try:
-                # Limit to recent high relevance news
-                q = f"""
-                    select timestamp_utc, headline, event_sentiment_score, event_relevance
-                    from {tbl}
-                    where entity_name = 'Federal Reserve System'
-                    and event_relevance >= 90
-                    order by timestamp_utc desc
-                    limit 100
-                """
-                d = db.raw_sql(q)
-                if not d.empty:
-                    dfs.append(d)
-            except:
-                pass
-                
-        if dfs:
-            full_df = pd.concat(dfs)
-            # Parse timestamps
-            # timestamp_utc format often: 2024-01-01 12:00:00.000
-            full_df['date'] = pd.to_datetime(full_df['timestamp_utc'])
-            full_df = full_df.sort_values('date', ascending=False).head(100)
-            
-            full_df.to_parquet(cache_path)
-            return full_df
-            
-        return pd.DataFrame()
 
     def get_sector_index(self, ticker, start_date='2020-01-01'):
         """
