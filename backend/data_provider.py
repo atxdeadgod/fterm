@@ -1194,6 +1194,63 @@ class DataManager:
             
         return pd.DataFrame()
 
+
+    def get_analyst_ratings(self, ticker):
+        """
+        Fetch Analyst Recommendations (Buy/Hold/Sell) and Price Targets from I/B/E/S.
+        """
+        cache_path = self._get_cache_path(ticker, "ratings")
+        if self._is_cache_valid(ticker, "ratings") and cache_path.exists():
+             return pd.read_parquet(cache_path)
+
+        print(f"Fetching Analyst Ratings for {ticker}...")
+        try:
+            db = self._get_conn()
+            # Fetch last 2 years
+            
+            # 1. Recommendations (recdsum)
+            # meanrec: 1=Strong Buy, 5=Sell
+            q_rec = f"""
+                select statpers, meanrec, numrec, buypct, holdpct, sellpct
+                from ibes.recdsum
+                where ticker = '{ticker}'
+                and statpers >= current_date - interval '2 years'
+                order by statpers asc
+            """
+            rec_df = db.raw_sql(q_rec)
+            
+            # 2. Price Targets (ptgsum)
+            # meanptg: Mean Price Target
+            q_pt = f"""
+                select statpers, meanptg, medptg, ptghigh, ptglow, numest
+                from ibes.ptgsum
+                where ticker = '{ticker}'
+                and statpers >= current_date - interval '2 years'
+                order by statpers asc
+            """
+            pt_df = db.raw_sql(q_pt)
+            
+            if not rec_df.empty:
+                rec_df['date'] = pd.to_datetime(rec_df['statpers'])
+                
+                if not pt_df.empty:
+                    pt_df['date'] = pd.to_datetime(pt_df['statpers'])
+                    # Merge on date (Outer join to keep all data points)
+                    merged = pd.merge(rec_df, pt_df, on='date', how='outer', suffixes=('_rec', '_pt'))
+                    merged = merged.sort_values('date')
+                    # Forward fill to ensure charts have continuous lines if data is slightly misaligned
+                    merged = merged.ffill().bfill()
+                else:
+                    merged = rec_df
+                
+                merged.to_parquet(cache_path)
+                return merged
+                
+        except Exception as e:
+            print(f"Error fetching ratings: {e}")
+            
+        return pd.DataFrame()
+
     def get_sector_index(self, ticker, start_date='2020-01-01'):
         """
         Construct an equal-weighted sector index from SIC peers.

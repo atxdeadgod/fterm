@@ -524,9 +524,65 @@ with col1:
 
         if not est_df.empty:
             st.subheader("Detailed Estimates Snapshot")
-            st.dataframe(est_df.head(20))
+        if not est_df.empty:
+            st.dataframe(est_df.tail(10).sort_values('date', ascending=False))
         else:
-            st.info("No Detailed Estimates Data Found")
+            st.info("No Estimates Revisions Data Found")
+            
+        st.markdown("---")
+        st.subheader("Analyst Recommendations & Price Targets (I/B/E/S)")
+        ratings_df = dm.get_analyst_ratings(current_ticker)
+        
+        if not ratings_df.empty and 'meanrec' in ratings_df.columns:
+            # Metrics
+            latest = ratings_df.iloc[-1]
+            c1, c2, c3 = st.columns(3)
+            
+            # Rec Score: 1=Strong Buy, 5=Sell (Typical I/B/E/S scale)
+            rec_score = latest['meanrec']
+            rec_text = "Strong Buy" if rec_score <= 1.5 else "Buy" if rec_score <= 2.5 else "Hold" if rec_score <= 3.5 else "Sell"
+            c1.metric("Consensus", rec_text, f"{rec_score:.2f} Score")
+            
+            if 'meanptg' in latest:
+                upside = (latest['meanptg'] / last_price - 1) * 100
+                c2.metric("Mean Target", f"${latest['meanptg']:.2f}", f"{upside:+.1f}%")
+                c3.metric("Num Analysts", f"{latest['numrec']:.0f}")
+                
+            # Chart 1: Price vs Targets
+            if 'meanptg' in ratings_df.columns:
+                fig_pt = go.Figure()
+                # Use filtered prices for context
+                if not prices_filtered.empty:
+                     fig_pt.add_trace(go.Scatter(x=prices_filtered['date'], y=prices_filtered['prc'], name='Stock Price', line=dict(color='black')))
+                
+                fig_pt.add_trace(go.Scatter(x=ratings_df['date'], y=ratings_df['meanptg'], name='Mean Target', line=dict(color='blue', dash='dash')))
+                if 'ptghigh' in ratings_df.columns:
+                    fig_pt.add_trace(go.Scatter(x=ratings_df['date'], y=ratings_df['ptghigh'], name='High Target', line=dict(color='green', width=0.5)))
+                if 'ptglow' in ratings_df.columns:
+                    fig_pt.add_trace(go.Scatter(x=ratings_df['date'], y=ratings_df['ptglow'], name='Low Target', line=dict(color='red', width=0.5)))
+                    
+                fig_pt.update_layout(title="Price vs Analyst Targets", height=400)
+                st.plotly_chart(fig_pt, use_container_width=True)
+                
+            # Chart 2: Recommendations Trend (Stacked Area)
+            fig_rec = go.Figure()
+            fig_rec.add_trace(go.Scatter(
+                x=ratings_df['date'], y=ratings_df['buypct'], 
+                mode='lines', stackgroup='one', name='Buy %', line=dict(color='green')
+            ))
+            fig_rec.add_trace(go.Scatter(
+                x=ratings_df['date'], y=ratings_df['holdpct'], 
+                mode='lines', stackgroup='one', name='Hold %', line=dict(color='orange')
+            ))
+            fig_rec.add_trace(go.Scatter(
+                x=ratings_df['date'], y=ratings_df['sellpct'], 
+                mode='lines', stackgroup='one', name='Sell %', line=dict(color='red')
+            ))
+            fig_rec.update_layout(title="Analyst Recommendation Trends", height=350, yaxis=dict(range=[0, 100], title="Percentage"))
+            st.plotly_chart(fig_rec, use_container_width=True)
+            
+        else:
+            st.info("No detailed Analyst Ratings data available.")
 
     elif selection == "Ownership & Shorts":
         st.subheader("Ownership & Short Interest")
