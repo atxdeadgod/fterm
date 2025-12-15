@@ -177,27 +177,50 @@ if not prices_filtered.empty and not factors_filtered.empty:
             reg_df['rolling_beta'] = roll_cov / roll_var
             rolling_beta = reg_df.dropna(subset=['rolling_beta'])
 
+# Metrics Calculation
+current_price = 0.0
+total_return = 0.0
+volatility = 0.0
+
+if not prices_filtered.empty:
+    current_price = prices_filtered.iloc[-1]['prc']
+    if len(prices_filtered) > 1:
+        start_p = prices_filtered.iloc[0]['prc']
+        total_return = (current_price / start_p) - 1 if start_p != 0 else 0.0
+        
+        if 'ret' in prices_filtered.columns:
+             volatility = prices_filtered['ret'].std() * (252**0.5)
+        else:
+             volatility = prices_filtered['prc'].pct_change().std() * (252**0.5)
+
 # Layout
 col1, col2 = st.columns([3, 1])
 
 with col1:
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Price & Performance", "Factor Analysis", "Peer Comparison", "Fundamentals", "Estimates"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Price & Performance", "Factor Analysis", "Peer Comparison", "Fundamentals & Valuation", "Estimates", "Ownership & Shorts"])
 
     with tab1:
         if not prices_filtered.empty:
-            st.subheader("Price History")
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=prices_filtered['date'], y=prices_filtered['prc'], mode='lines', name='Price'))
-            fig.update_layout(height=400, margin=dict(l=0,r=0,t=0,b=0))
-            st.plotly_chart(fig, use_container_width=True)
-            
-            if not excess_ret_cum.empty:
-               st.subheader("Performance vs Market")
-               fig2 = go.Figure()
-               fig2.add_trace(go.Scatter(x=excess_ret_cum['date'], y=excess_ret_cum['cum_ret_stock'], mode='lines', name=f'{current_ticker} Cum Ret'))
-               fig2.add_trace(go.Scatter(x=excess_ret_cum['date'], y=excess_ret_cum['cum_ret_mkt'], mode='lines', name='Market Cum Ret', line=dict(dash='dash')))
-               fig2.update_layout(yaxis_tickformat='.0%', height=300, margin=dict(l=0,r=0,t=0,b=0))
-               st.plotly_chart(fig2, use_container_width=True)
+            col_chart, col_metrics = st.columns([3, 1])
+            with col_chart:
+                 st.subheader("Price History")
+                 fig = go.Figure()
+                 fig.add_trace(go.Scatter(x=prices_filtered['date'], y=prices_filtered['prc'], mode='lines', name='Price'))
+                 fig.update_layout(height=350, margin=dict(l=0,r=0,t=0,b=0))
+                 st.plotly_chart(fig, use_container_width=True)
+                 
+                 if not excess_ret_cum.empty:
+                    st.subheader("Performance vs Market")
+                    fig2 = go.Figure()
+                    fig2.add_trace(go.Scatter(x=excess_ret_cum['date'], y=excess_ret_cum['cum_ret_stock'], mode='lines', name=f'{current_ticker} Cum Ret'))
+                    fig2.add_trace(go.Scatter(x=excess_ret_cum['date'], y=excess_ret_cum['cum_ret_mkt'], mode='lines', name='Market Cum Ret', line=dict(dash='dash')))
+                    fig2.update_layout(yaxis_tickformat='.0%', height=300, margin=dict(l=0,r=0,t=0,b=0))
+                    st.plotly_chart(fig2, use_container_width=True)
+
+            with col_metrics:
+                st.metric("Latest Price", f"${current_price:.2f}")
+                st.metric("Total Return", f"{total_return:.2%}")
+                st.metric("Annualized Volatility", f"{volatility:.2%}")
         else:
             st.warning("No Price Data for selected range")
 
@@ -420,6 +443,67 @@ with col1:
             st.dataframe(est_df)
         else:
             st.info("No Estimates Data Found")
+
+    with tab6:
+        st.subheader("Ownership & Short Interest")
+        
+        col_short, col_inst = st.columns(2)
+        
+        with col_short:
+            st.markdown("##### Short Interest")
+            short_df = dm.get_short_interest(current_ticker)
+            if not short_df.empty:
+                # Latest
+                latest_short = short_df.iloc[-1]
+                st.metric("Shares Short", f"{latest_short['shortint']:,.0f}", f"Date: {latest_short['datadate'].strftime('%Y-%m-%d')}")
+                
+                fig_short = go.Figure()
+                fig_short.add_trace(go.Scatter(x=short_df['datadate'], y=short_df['shortint'], fill='tozeroy', name='Short Interest'))
+                fig_short.update_layout(title="Short Interest (Shares)", height=300)
+                st.plotly_chart(fig_short, use_container_width=True)
+            else:
+                st.info("No Short Interest data available.")
+
+        with col_inst:
+            st.markdown("##### Institutional Holdings (13F)")
+            inst_df = dm.get_institutional_holdings(current_ticker)
+            if not inst_df.empty:
+                latest_inst = inst_df.iloc[-1]
+                st.metric("Total Inst. Shares", f"{latest_inst['total_shares']:,.0f}", f"Institutions: {latest_inst['num_institutions']}")
+                
+                fig_inst = go.Figure()
+                fig_inst.add_trace(go.Scatter(x=inst_df['fdate'], y=inst_df['total_shares'], name='Shares Held'))
+                fig_inst.update_layout(title="Institutional Shares Held", height=300)
+                st.plotly_chart(fig_inst, use_container_width=True)
+            else:
+                st.info("No Institutional data available.")
+        
+        st.markdown("---")
+        st.markdown("##### Insider Transactions")
+        insider_df = dm.get_insider_transactions(current_ticker)
+        if not insider_df.empty:
+            # Chart: Net Buy/Sell Value
+            # Aggregate by day for chart
+            daily_insider = insider_df.groupby('trandate')['signed_value'].sum().reset_index()
+            
+            fig_insider = go.Figure()
+            colors = ['green' if v > 0 else 'red' for v in daily_insider['signed_value']]
+            fig_insider.add_trace(go.Bar(
+                x=daily_insider['trandate'], 
+                y=daily_insider['signed_value'],
+                marker_color=colors,
+                name='Net Transaction Value'
+            ))
+            fig_insider.update_layout(title="Net Insider Buying/Selling ($)", height=300)
+            st.plotly_chart(fig_insider, use_container_width=True)
+            
+            # Table
+            st.dataframe(
+                insider_df[['trandate', 'personid', 'rolecode1', 'acqdisp', 'shares', 'tprice', 'value']].head(50),
+                use_container_width=True
+            )
+        else:
+            st.info("No Insider Transaction data available.")
 
 with col2:
     st.subheader("Snapshot")

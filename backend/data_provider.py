@@ -617,6 +617,152 @@ class DataManager:
             
         return pd.DataFrame()
 
+    def _get_cusip(self, ticker):
+        """Helper to resolve ticker to CUSIP (Header/Historical)"""
+        db = self._get_conn()
+        # Try comp.secd (latest)
+        try:
+            query = f"select distinct cusip from comp.secd where tic='{ticker}' order by datadate desc limit 1"
+            df = db.raw_sql(query)
+            if not df.empty:
+                return df.iloc[0]['cusip']
+        except Exception:
+            pass
+            
+        # Fallback to comp.names
+        try:
+            query = f"select distinct cusip from comp.names where tic='{ticker}' limit 1"
+            df = db.raw_sql(query)
+            if not df.empty:
+                return df.iloc[0]['cusip']
+        except Exception:
+            pass
+        return None
+
+    def get_short_interest(self, ticker):
+        """Fetch Short Interest from comp.sec_shortint"""
+        cache_path = self._get_cache_path(ticker, "short_interest")
+        if self._is_cache_valid(ticker, "short_interest") and cache_path.exists():
+            return pd.read_parquet(cache_path)
+
+        gvkey = self._get_gvkey(ticker)
+        if not gvkey: 
+            return pd.DataFrame()
+
+        print(f"Fetching Short Interest for {ticker}...")
+        db = self._get_conn()
+        
+        # shortint = Number of Shares Short
+        # Note: avgdailyvol is NOT in sec_shortint.
+        query = f"""
+            select datadate, shortint
+            from comp.sec_shortint
+            where gvkey='{gvkey}'
+            order by datadate asc
+        """
+        try:
+            df = db.raw_sql(query, date_cols=['datadate'])
+            if not df.empty:
+                df['shortint'] = pd.to_numeric(df['shortint'], errors='coerce')
+                # df['days_to_cover'] = ... (Need external volume data)
+                
+                df.to_parquet(cache_path)
+                return df
+        except Exception as e:
+            print(f"Error fetching Short Int: {e}")
+            
+        return pd.DataFrame()
+
+    def get_institutional_holdings(self, ticker):
+        """Fetch Institutional Holdings from TFN S34 (13F)"""
+        cache_path = self._get_cache_path(ticker, "institutional")
+        if self._is_cache_valid(ticker, "institutional") and cache_path.exists():
+            return pd.read_parquet(cache_path)
+
+        cusip = self._get_cusip(ticker)
+        if not cusip:
+            # Try 8-digit CUSIP usually needed for TFN
+            return pd.DataFrame()
+            
+        # TFN usually uses 8-char CUSIP. comp.secd returns 9-digit (inc checksum).
+        # We might need to trim.
+        cusip8 = cusip[:8]
+
+        print(f"Fetching Institutional Holdings for {ticker} (CUSIP: {cusip8})...")
+        db = self._get_conn()
+        
+        # s34 tables are huge. We query carefully.
+        # datadate defined in rdate (Report Date) or fdate (File Date). usually fdate is used.
+        # shares: number of shares held
+        start_date = (datetime.now() - timedelta(days=5*365)).strftime('%Y-%m-%d')
+        
+        query = f"""
+            select fdate, sum(shares) as total_shares, count(distinct mgrno) as num_institutions
+            from tfn.s34
+            where cusip='{cusip8}' 
+            and fdate >= '{start_date}'
+            group by fdate
+            order by fdate asc
+        """
+        try:
+            df = db.raw_sql(query, date_cols=['fdate'])
+            if not df.empty:
+                df.to_parquet(cache_path)
+                return df
+        except Exception as e:
+            print(f"Error fetching Institutional: {e}")
+        
+        return pd.DataFrame()
+
+    def get_insider_transactions(self, ticker):
+        """Fetch Insider Transactions from TFN Table1"""
+        cache_path = self._get_cache_path(ticker, "insider")
+        if self._is_cache_valid(ticker, "insider") and cache_path.exists():
+            return pd.read_parquet(cache_path)
+
+        cusip = self._get_cusip(ticker)
+        if not cusip: return pd.DataFrame()
+        cusip8 = cusip[:8] # TFN uses 8 digit
+
+        print(f"Fetching Insider Trades for {ticker}...")
+        db = self._get_conn()
+        
+        start_date = (datetime.now() - timedelta(days=2*365)).strftime('%Y-%m-%d')
+        
+        # table1:
+        # trandate: Transaction Date
+        # shares: Number of shares
+        # tprice: Price
+        # acqdisp: A (Acquire), D (Dispose)
+        
+        
+        query = f"""
+            select trandate, shares, tprice, acqdisp, personid, owner, rolecode1
+            from tfn.table1
+            where ticker='{ticker}'
+            and trandate >= '{start_date}'
+            and acqdisp in ('A', 'D')
+            order by trandate desc
+        """
+        try:
+            df = db.raw_sql(query, date_cols=['trandate'])
+            if not df.empty:
+                df['shares'] = pd.to_numeric(df['shares'], errors='coerce')
+                df['tprice'] = pd.to_numeric(df['tprice'], errors='coerce')
+                
+                # Calculate value
+                df['value'] = df['shares'] * df['tprice']
+                
+                # Sign the value: A = Buy (+), D = Sell (-)
+                df['signed_value'] = df.apply(lambda row: row['value'] if row['acqdisp'] == 'A' else -row['value'], axis=1)
+                
+                df.to_parquet(cache_path)
+                return df
+        except Exception as e:
+            print(f"Error fetching Insiders: {e}")
+
+        return pd.DataFrame()
+
     def get_sector_index(self, ticker, start_date='2020-01-01'):
         """
         Construct an equal-weighted sector index from SIC peers.
