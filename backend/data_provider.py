@@ -106,66 +106,110 @@ class DataManager:
                 return True
         return False
 
+    def _get_gvkey(self, ticker):
+        """Helper to resolve ticker to GVKEY"""
+        db = self._get_conn()
+        try:
+            query_gvkey = f"select distinct gvkey from comp.names where tic='{ticker}' limit 1"
+            gvkey_df = db.raw_sql(query_gvkey)
+            if not gvkey_df.empty:
+                return gvkey_df.iloc[0]['gvkey']
+        except Exception as e:
+            print(f"Error resolving GVKEY: {e}")
+            pass
+            
+        # Alternate: comp.company
+        try:
+            query_gvkey = f"select gvkey from comp.company where tic='{ticker}' limit 1"
+            gvkey_df = db.raw_sql(query_gvkey)
+            if not gvkey_df.empty:
+                return gvkey_df.iloc[0]['gvkey']
+        except Exception:
+            pass
+        return None
+
     def get_prices(self, ticker, start_date='2010-01-01'):
-        """Fetch daily prices from CRSP"""
+        """Fetch daily prices from Compustat (comp.secd) for better recency"""
         cache_path = self._get_cache_path(ticker, "prices")
-        # For cache validity, if we request an earlier date than what's in cache, we should re-fetch.
-        # But for simplicity, we just clear cache manually or rely on user.
         
         if self._is_cache_valid(ticker, "prices") and cache_path.exists():
             print(f"Loading {ticker} prices from cache...")
             df = pd.read_parquet(cache_path)
-            # Ensure date is datetime even from cache
             if 'date' in df.columns:
                 df['date'] = pd.to_datetime(df['date'])
             return df
 
-        print(f"Fetching {ticker} prices from WRDS...")
+        print(f"Fetching {ticker} prices from WRDS (Compustat)...")
         db = self._get_conn()
         
-        # Step 1: Get PERMNO
-        query_permno = f"select permno, comnam from crsp.stocknames where ticker='{ticker}'"
-        try:
-            permno_df = db.raw_sql(query_permno)
-            if permno_df.empty:
-                raise ValueError(f"Ticker {ticker} not found in CRSP")
-            permno = permno_df.iloc[0]['permno']
-        except Exception as e:
-             # Fallback or error
-             print(f"Error resolving ticker: {e}")
-             return pd.DataFrame()
+        gvkey = self._get_gvkey(ticker)
+        if not gvkey:
+            print(f"No GVKEY found for {ticker}")
+            return pd.DataFrame()
 
-        # Step 2: Get Prices
+        # Fetch Price, Volume, and Adjustment Factors
+        # prccd: Close Price
+        # cshtrd: Volume
+        # cshoc: Shares Outstanding
+        # trfd: Total Return Factor Daily
+        # ajexdi: Adjustment Factor (Cumulative)
+        
         query_prices = f"""
-            select date, prc, vol, ret, shrout 
-            from crsp.dsf 
-            where permno={permno} 
-            and date >= '{start_date}'
+            select datadate, prccd, cshtrd, cshoc, trfd, ajexdi
+            from comp.secd 
+            where gvkey='{gvkey}' 
+            and datadate >= '{start_date}'
+            order by datadate asc
         """
         try:
-            df = db.raw_sql(query_prices, date_cols=['date'])
-            # Ensure proper datetime type
+            df = db.raw_sql(query_prices, date_cols=['datadate'])
+            
+            # Rename for compatibility
+            df.rename(columns={
+                'datadate': 'date',
+                'prccd': 'prc',
+                'cshtrd': 'vol',
+                'cshoc': 'shrout' # Note: Compustat cshoc is Units, CRSP shrout is Thousands.
+            }, inplace=True)
+            
             df['date'] = pd.to_datetime(df['date'])
-            # Ensure numeric types
-            for col in ['prc', 'vol', 'ret', 'shrout']:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
+            cols = ['prc', 'vol', 'shrout', 'trfd', 'ajexdi']
+            for c in cols:
+                df[c] = pd.to_numeric(df[c], errors='coerce')
+            
+            # Handle Adjustments
+            df['ajexdi'] = df['ajexdi'].fillna(1.0)
+            df['trfd'] = df['trfd'].fillna(1.0)
+            
+            # Adjusted Price for Returns
+            # prc_adj = prc / ajexdi * trfd
+            # Return = prc_adj.pct_change()
+            df['prc_adj'] = df['prc'] / df['ajexdi'] * df['trfd']
+            df['ret'] = df['prc_adj'].pct_change()
+            
+            # Fill first ret with 0 or NaN
+            df['ret'] = df['ret'].fillna(0.0)
+            
+            # Drop adjustment cols if not needed
+            df = df[['date', 'prc', 'vol', 'ret', 'shrout']]
+            
+            # Save to cache
+            df.to_parquet(cache_path)
+            
+            # Update metadata
+            metadata = self._load_metadata(ticker)
+            metadata["prices"] = {
+                "last_updated": datetime.now().isoformat(),
+                "start_date": start_date,
+                "max_date": df['date'].max().isoformat() if not df.empty else None
+            }
+            self._save_metadata(ticker, metadata)
+            
+            return df
+
         except Exception as e:
             print(f"Error fetching prices: {e}")
             return pd.DataFrame()
-        
-        # Save to cache
-        df.to_parquet(cache_path)
-        
-        # Update metadata
-        metadata = self._load_metadata(ticker)
-        metadata["prices"] = {
-            "last_updated": datetime.now().isoformat(),
-            "start_date": start_date,
-            "max_date": df['date'].max().isoformat() if not df.empty else None
-        }
-        self._save_metadata(ticker, metadata)
-        
-        return df
 
     def get_fundamentals(self, ticker):
         """Fetch quarterly fundamentals from Compustat"""
@@ -178,29 +222,10 @@ class DataManager:
         print(f"Fetching {ticker} fundamentals from WRDS...")
         db = self._get_conn()
         
-        # Step 1: Resolve Ticker to GVKEY (Compustat ID)
-        # Use comp.names which maps tic -> gvkey. select distinct to avoid dupes.
+        gvkey = self._get_gvkey(ticker)
+        if not gvkey:
+            return pd.DataFrame()
         
-        try:
-            query_gvkey = f"select distinct gvkey from comp.names where tic='{ticker}' limit 1"
-            gvkey_df = db.raw_sql(query_gvkey)
-            if gvkey_df.empty:
-                 print(f"No GVKEY found for {ticker}")
-                 return pd.DataFrame()
-            gvkey = gvkey_df.iloc[0]['gvkey']
-        except Exception as e:
-            print(f"Error resolving GVKEY: {e} - Trying alternate table")
-            # Alternate: comp.security (tic)
-            try:
-                query_gvkey = f"select gvkey, conm from comp.company where tic='{ticker}' limit 1"
-                gvkey_df = db.raw_sql(query_gvkey)
-                if gvkey_df.empty:
-                    return pd.DataFrame()
-                gvkey = gvkey_df.iloc[0]['gvkey']
-            except Exception as e2:
-                print(f"Error resolving GVKEY (2nd attempt): {e2}")
-                return pd.DataFrame()
-
         # Step 2: Get Metrics (Quarterly)
         # We fetch last 15 years now
         start_date = (datetime.now() - timedelta(days=15*365)).strftime('%Y-%m-%d')
